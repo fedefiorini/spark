@@ -42,6 +42,25 @@
     </dependency>
     --><!-- #endif scala-2.13 -->
     <dependency>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-memory-core</artifactId>
+      <version>5.0.0</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-vector</artifactId>
+      <version>7.0.0</version>
+      <scope>system</scope>
+      <systemPath>${project.basedir}/src/main/resources/arrow-vector-7.0.0-SNAPSHOT.jar</systemPath>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-parquet</artifactId>
+      <version>7.0.0</version>
+      <scope>system</scope>
+      <systemPath>${project.basedir}/src/main/resources/arrow-parquet-7.0.0-SNAPSHOT.jar</systemPath>
+    </dependency>
+    <dependency>
       <groupId>org.apache.avro</groupId>
       <artifactId>avro</artifactId>
     </dependency>
