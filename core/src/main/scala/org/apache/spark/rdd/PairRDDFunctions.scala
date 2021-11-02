@@ -19,22 +19,18 @@ package org.apache.spark.rdd
 
 import java.nio.ByteBuffer
 import java.util.{HashMap => JHashMap}
-
-import scala.collection.{mutable, Map}
+import scala.collection.{Map, mutable}
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.ClassTag
-
 import com.clearspring.analytics.stream.cardinality.HyperLogLogPlus
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.io.SequenceFile.CompressionType
 import org.apache.hadoop.io.compress.CompressionCodec
 import org.apache.hadoop.mapred.{FileOutputCommitter, FileOutputFormat, JobConf, OutputFormat}
 import org.apache.hadoop.mapreduce.{Job => NewAPIHadoopJob, OutputFormat => NewOutputFormat}
-
 import org.apache.spark._
 import org.apache.spark.Partitioner.defaultPartitioner
-import org.apache.spark.errors.SparkCoreErrors
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config.SPECULATION_ENABLED
 import org.apache.spark.internal.io._
@@ -50,7 +46,6 @@ import org.apache.spark.util.random.StratifiedSamplingUtils
 class PairRDDFunctions[K, V](self: RDD[(K, V)])
     (implicit kt: ClassTag[K], vt: ClassTag[V], ord: Ordering[K] = null)
   extends Logging with Serializable {
-
   /**
    * Generic function to combine the elements for each key using a custom set of aggregation
    * functions. Turns an RDD[(K, V)] into a result of type RDD[(K, C)], for a "combined type" C
@@ -73,14 +68,14 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
       mergeCombiners: (C, C) => C,
       partitioner: Partitioner,
       mapSideCombine: Boolean = true,
-      serializer: Serializer = null)(implicit ct: ClassTag[C]): RDD[(K, C)] = self.withScope {
+      serializer: Serializer = null)(implicit ct: ClassTag[C]): RDD[(K, C)] = {
     require(mergeCombiners != null, "mergeCombiners must be defined") // required as of Spark 0.9.0
     if (keyClass.isArray) {
       if (mapSideCombine) {
-        throw SparkCoreErrors.cannotUseMapSideCombiningWithArrayKeyError()
+        throw new SparkException("Cannot use map-side combining with array keys.")
       }
       if (partitioner.isInstanceOf[HashPartitioner]) {
-        throw SparkCoreErrors.hashPartitionerCannotPartitionArrayKeyError()
+        throw new SparkException("HashPartitioner cannot partition array keys.")
       }
     }
     val aggregator = new Aggregator[K, V, C](
@@ -93,10 +88,20 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
         new InterruptibleIterator(context, aggregator.combineValuesByKey(iter, context))
       }, preservesPartitioning = true)
     } else {
-      new ShuffledRDD[K, V, C](self, partitioner)
-        .setSerializer(serializer)
-        .setAggregator(aggregator)
-        .setMapSideCombine(mapSideCombine)
+      /* Update 07.09: now it supports both Arrow and non-Arrow shuffled RDD */
+      self match {
+        case prev: ArrowRDD[(K, V)] =>
+          new ShuffledArrowRDD[K, V, C](prev, partitioner)
+            .setSerializer(serializer)
+            .setAggregator(aggregator)
+            .setMapSideCombine(mapSideCombine)
+        case _ =>
+          new ShuffledRDD[K, V, C](self, partitioner)
+          .setSerializer(serializer)
+          .setAggregator(aggregator)
+          .setMapSideCombine(mapSideCombine)
+      }
+
     }
   }
 
@@ -129,7 +134,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
       createCombiner: V => C,
       mergeValue: (C, V) => C,
       mergeCombiners: (C, C) => C,
-      numPartitions: Int): RDD[(K, C)] = self.withScope {
+      numPartitions: Int): RDD[(K, C)] = {
     combineByKeyWithClassTag(createCombiner, mergeValue, mergeCombiners, numPartitions)(null)
   }
 
@@ -140,7 +145,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
       createCombiner: V => C,
       mergeValue: (C, V) => C,
       mergeCombiners: (C, C) => C,
-      numPartitions: Int)(implicit ct: ClassTag[C]): RDD[(K, C)] = self.withScope {
+      numPartitions: Int)(implicit ct: ClassTag[C]): RDD[(K, C)] = {
     combineByKeyWithClassTag(createCombiner, mergeValue, mergeCombiners,
       new HashPartitioner(numPartitions))
   }
@@ -300,7 +305,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
    * also perform the merging locally on each mapper before sending results to a reducer, similarly
    * to a "combiner" in MapReduce.
    */
-  def reduceByKey(partitioner: Partitioner, func: (V, V) => V): RDD[(K, V)] = self.withScope {
+  def reduceByKey(partitioner: Partitioner, func: (V, V) => V): RDD[(K, V)] = {
     combineByKeyWithClassTag[V]((v: V) => v, func, func, partitioner)
   }
 
@@ -309,7 +314,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
    * also perform the merging locally on each mapper before sending results to a reducer, similarly
    * to a "combiner" in MapReduce. Output will be hash-partitioned with numPartitions partitions.
    */
-  def reduceByKey(func: (V, V) => V, numPartitions: Int): RDD[(K, V)] = self.withScope {
+  def reduceByKey(func: (V, V) => V, numPartitions: Int): RDD[(K, V)] = {
     reduceByKey(new HashPartitioner(numPartitions), func)
   }
 
@@ -319,7 +324,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
    * to a "combiner" in MapReduce. Output will be hash-partitioned with the existing partitioner/
    * parallelism level.
    */
-  def reduceByKey(func: (V, V) => V): RDD[(K, V)] = self.withScope {
+  def reduceByKey(func: (V, V) => V): RDD[(K, V)] = {
     reduceByKey(defaultPartitioner(self), func)
   }
 
@@ -332,7 +337,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
     val cleanedF = self.sparkContext.clean(func)
 
     if (keyClass.isArray) {
-      throw SparkCoreErrors.reduceByKeyLocallyNotSupportArrayKeysError()
+      throw new SparkException("reduceByKeyLocally() does not support array keys")
     }
 
     val reducePartition = (iter: Iterator[(K, V)]) => {
@@ -525,7 +530,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
    */
   def partitionBy(partitioner: Partitioner): RDD[(K, V)] = self.withScope {
     if (keyClass.isArray && partitioner.isInstanceOf[HashPartitioner]) {
-      throw SparkCoreErrors.hashPartitionerCannotPartitionArrayKeyError()
+      throw new SparkException("HashPartitioner cannot partition array keys.")
     }
     if (self.partitioner == Some(partitioner)) {
       self
@@ -777,7 +782,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
       partitioner: Partitioner)
       : RDD[(K, (Iterable[V], Iterable[W1], Iterable[W2], Iterable[W3]))] = self.withScope {
     if (partitioner.isInstanceOf[HashPartitioner] && keyClass.isArray) {
-      throw SparkCoreErrors.hashPartitionerCannotPartitionArrayKeyError()
+      throw new SparkException("HashPartitioner cannot partition array keys.")
     }
     val cg = new CoGroupedRDD[K](Seq(self, other1, other2, other3), partitioner)
     cg.mapValues { case Array(vs, w1s, w2s, w3s) =>
@@ -795,7 +800,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
   def cogroup[W](other: RDD[(K, W)], partitioner: Partitioner)
       : RDD[(K, (Iterable[V], Iterable[W]))] = self.withScope {
     if (partitioner.isInstanceOf[HashPartitioner] && keyClass.isArray) {
-      throw SparkCoreErrors.hashPartitionerCannotPartitionArrayKeyError()
+      throw new SparkException("HashPartitioner cannot partition array keys.")
     }
     val cg = new CoGroupedRDD[K](Seq(self, other), partitioner)
     cg.mapValues { case Array(vs, w1s) =>
@@ -810,7 +815,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
   def cogroup[W1, W2](other1: RDD[(K, W1)], other2: RDD[(K, W2)], partitioner: Partitioner)
       : RDD[(K, (Iterable[V], Iterable[W1], Iterable[W2]))] = self.withScope {
     if (partitioner.isInstanceOf[HashPartitioner] && keyClass.isArray) {
-      throw SparkCoreErrors.hashPartitionerCannotPartitionArrayKeyError()
+      throw new SparkException("HashPartitioner cannot partition array keys.")
     }
     val cg = new CoGroupedRDD[K](Seq(self, other1, other2), partitioner)
     cg.mapValues { case Array(vs, w1s, w2s) =>

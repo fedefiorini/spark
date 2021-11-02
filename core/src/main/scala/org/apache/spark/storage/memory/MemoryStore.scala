@@ -299,7 +299,8 @@ private[spark] class MemoryStore(
 
     val valuesHolder = new DeserializedValuesHolder[T](classTag, memoryMode)
 
-    putIterator(blockId, values, classTag, memoryMode, valuesHolder) match {
+    //putIterator(blockId, values, classTag, memoryMode, valuesHolder) match {  OFF_HEAP Hack
+      putIterator(blockId, values, classTag, MemoryMode.OFF_HEAP, valuesHolder) match {
       case Right(storedSize) => Right(storedSize)
       case Left(unrollMemoryUsedByThisBlock) =>
         val unrolledIterator = if (valuesHolder.vector != null) {
@@ -310,7 +311,8 @@ private[spark] class MemoryStore(
 
         Left(new PartiallyUnrolledIterator(
           this,
-          memoryMode,
+          // memoryMode,
+          MemoryMode.OFF_HEAP,
           unrollMemoryUsedByThisBlock,
           unrolled = unrolledIterator,
           rest = values))

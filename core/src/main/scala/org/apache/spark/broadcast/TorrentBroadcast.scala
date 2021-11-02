@@ -73,10 +73,6 @@ private[spark] class TorrentBroadcast[T: ClassTag](obj: T, id: Long)
   /** Size of each block. Default value is 4MB.  This value is only read by the broadcaster. */
   @transient private var blockSize: Int = _
 
-
-  /** Whether to generate checksum for blocks or not. */
-  private var checksumEnabled: Boolean = false
-
   private def setConf(conf: SparkConf): Unit = {
     compressionCodec = if (conf.get(config.BROADCAST_COMPRESS)) {
       Some(CompressionCodec.createCodec(conf))
@@ -94,6 +90,8 @@ private[spark] class TorrentBroadcast[T: ClassTag](obj: T, id: Long)
   /** Total number of blocks this broadcast variable contains. */
   private val numBlocks: Int = writeBlocks(obj)
 
+  /** Whether to generate checksum for blocks or not. */
+  private var checksumEnabled: Boolean = false
   /** The checksum for all the blocks. */
   private var checksums: Array[Int] = _
 
@@ -132,7 +130,9 @@ private[spark] class TorrentBroadcast[T: ClassTag](obj: T, id: Long)
     // Store a copy of the broadcast variable in the driver so that tasks run on the driver
     // do not create a duplicate copy of the broadcast variable's value.
     val blockManager = SparkEnv.get.blockManager
-    if (!blockManager.putSingle(broadcastId, value, MEMORY_AND_DISK, tellMaster = false)) {
+    // change 5.08 enabled off_heap (lines 135 + 150)
+//    if (!blockManager.putSingle(broadcastId, value, MEMORY_AND_DISK, tellMaster = false)) {
+      if (!blockManager.putSingle(broadcastId, value, OFF_HEAP, tellMaster = false)) {
       throw new SparkException(s"Failed to store $broadcastId in BlockManager")
     }
     try {
@@ -147,7 +147,8 @@ private[spark] class TorrentBroadcast[T: ClassTag](obj: T, id: Long)
         }
         val pieceId = BroadcastBlockId(id, "piece" + i)
         val bytes = new ChunkedByteBuffer(block.duplicate())
-        if (!blockManager.putBytes(pieceId, bytes, MEMORY_AND_DISK_SER, tellMaster = true)) {
+//        if (!blockManager.putBytes(pieceId, bytes, MEMORY_AND_DISK_SER, tellMaster = true)) {
+        if (!blockManager.putBytes(pieceId, bytes, OFF_HEAP, tellMaster = true)) {
           throw new SparkException(s"Failed to store $pieceId of $broadcastId " +
             s"in local BlockManager")
         }
