@@ -62,8 +62,12 @@ class OrderedRDDFunctions[K : Ordering : ClassTag,
       : RDD[(K, V)] = self.withScope
   {
     val part = new RangePartitioner(numPartitions, self, ascending)
-    new ShuffledRDD[K, V, V](self, part)
-      .setKeyOrdering(if (ascending) ordering else ordering.reverse)
+    self match {
+      case prev: ArrowRDD[(K,V)] => new ShuffledArrowRDD[K,V,V](prev, part)
+        .setKeyOrdering(if (ascending) ordering else ordering.reverse)
+      case _ => new ShuffledRDD[K, V, V](self, part)
+        .setKeyOrdering(if (ascending) ordering else ordering.reverse)
+    }
   }
 
   /**
@@ -73,18 +77,18 @@ class OrderedRDDFunctions[K : Ordering : ClassTag,
    * This is more efficient than calling `repartition` and then sorting within each partition
    * because it can push the sorting down into the shuffle machinery.
    */
-  def repartitionAndSortWithinPartitions(partitioner: Partitioner): RDD[(K, V)] = self.withScope {
-    if (self.partitioner == Some(partitioner)) {
-      self.mapPartitions(iter => {
-        val context = TaskContext.get()
-        val sorter = new ExternalSorter[K, V, V](context, None, None, Some(ordering))
-        new InterruptibleIterator(context,
-          sorter.insertAllAndUpdateMetrics(iter).asInstanceOf[Iterator[(K, V)]])
-      }, preservesPartitioning = true)
-    } else {
-      new ShuffledRDD[K, V, V](self, partitioner).setKeyOrdering(ordering)
-    }
-  }
+//  def repartitionAndSortWithinPartitions(partitioner: Partitioner): RDD[(K, V)] = self.withScope {
+//    if (self.partitioner == Some(partitioner)) {
+//      self.mapPartitions(iter => {
+//        val context = TaskContext.get()
+//        val sorter = new ExternalSorter[K, V, V](context, None, None, Some(ordering))
+//        new InterruptibleIterator(context,
+//          sorter.insertAllAndUpdateMetrics(iter).asInstanceOf[Iterator[(K, V)]])
+//      }, preservesPartitioning = true)
+//    } else {
+//      new ShuffledRDD[K, V, V](self, partitioner).setKeyOrdering(ordering)
+//    }
+//  }
 
   /**
    * Returns an RDD containing only the elements in the inclusive range `lower` to `upper`.

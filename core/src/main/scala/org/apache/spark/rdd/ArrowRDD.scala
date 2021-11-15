@@ -1,13 +1,13 @@
 package org.apache.spark.rdd
 
+import org.apache.arrow.memory.RootAllocator
 import org.apache.arrow.vector._
 import org.apache.spark._
 import org.apache.spark.internal.Logging
 
-import scala.reflect.ClassTag
+import scala.reflect.{ClassTag, classTag}
 import scala.reflect.runtime.universe._
 
-import scala.language.implicitConversions
 /**
  * An Arrow-backed RDD using ValueVector as data input.
  * The logic used is similar to the one in ParallelCollectionRDD, with the only difference being that most of the
@@ -89,6 +89,11 @@ private object ArrowRDD {
    implicit def rddToPairRDDFunctions[K : ClassTag, V : ClassTag](rdd: ArrowRDD[(K, V)])
                                           (implicit kt: TypeTag[K], vt: TypeTag[V], ord: Ordering[K] = null): PairRDDFunctions[K, V] = {
     new PairRDDFunctions(rdd)
+  }
+
+  implicit def rddToOrderedRDDFunctions[K : Ordering : ClassTag, V: ClassTag](rdd: ArrowRDD[(K, V)])
+                                                                             (implicit kt: TypeTag[K], vt: TypeTag[V]) : OrderedRDDFunctions[K, V, (K, V)] = {
+    new OrderedRDDFunctions[K, V, (K, V)](rdd)
   }
 
   def slice[T: ClassTag](vec: ValueVector,

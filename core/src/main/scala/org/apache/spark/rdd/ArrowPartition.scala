@@ -1,10 +1,11 @@
 package org.apache.spark.rdd
 
-import org.apache.arrow.memory.RootAllocator
+import org.apache.arrow.memory.{ArrowBuf, RootAllocator}
 import org.apache.arrow.vector.types.Types.MinorType
 import org.apache.arrow.vector.{BigIntVector, IntVector, StringVector, ValueVector, VarBinaryVector, ZeroVector}
 import org.apache.spark.{Partition, SparkException}
 import org.apache.spark.internal.Logging
+import org.apache.spark.rdd.RDDOperationScope.withScope
 
 import java.io.{Externalizable, ObjectInput, ObjectOutput}
 import scala.reflect.{ClassTag, classTag}
@@ -370,7 +371,6 @@ class ArrowPartition extends Partition with Externalizable with Logging {
             }
             _data.head.setValueCount(len)
             _data.last.setValueCount(len)
-          case (_ , _) => throw new SparkException("Unsupported Arrow Vectors (tuple)")
         }
       case _ => throw new SparkException("Wrong number of vectors for readExternal method")
     }

@@ -4,7 +4,7 @@ import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.serializer.Serializer
 
-import scala.reflect.ClassTag
+import scala.reflect.{ClassTag, classTag}
 
 private [spark] class ShuffledArrowRDD[K: ClassTag, V: ClassTag, C: ClassTag](
     @transient var prev: ArrowRDD[_ <: Product2[K, V]],
@@ -60,8 +60,7 @@ private [spark] class ShuffledArrowRDD[K: ClassTag, V: ClassTag, C: ClassTag](
 
 
   override def getPartitions: Array[Partition] = {
-    prev.partitions
-//    Array.tabulate[Partition](part.numPartitions)(i => new ArrowPartition(id, i, _data))
+    Array.tabulate[Partition](part.numPartitions)(i => new ArrowPartition(id, i, prev.partitions(i).asInstanceOf[ArrowPartition].getVectors))
   }
 
   override protected def getPreferredLocations(partition: Partition): Seq[String] = {
